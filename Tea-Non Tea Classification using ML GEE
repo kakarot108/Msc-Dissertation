@@ -1,0 +1,152 @@
+https://code.earthengine.google.com/148fa79456bbfbb0b68b468e922c4b51?noload=true
+
+
+function maskLandsatclouds(image) {
+var qa = image.select('BQA');
+  var cloudBitMask = ee.Number(2).pow(4).int();
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0);
+  return image.updateMask(mask)
+      .select("B.*")
+      .copyProperties(image, ["system:time_start"]);
+}
+
+var L5 = ee.ImageCollection("LANDSAT/LT05/C02/T2_L2")
+  .filterDate('2010-02-01', '2010-03-30') 
+  .filter(ee.Filter.lt("CLOUD_COVER",10))
+  .filterBounds(table) 
+  .map(maskLandsatclouds)
+  //.select(L5bands);
+  var image = L5.median().clip(table); 
+print(image);
+
+//Add indicies for Better Accuracy
+var addIndices = function(image) {
+  var ndvi = image.normalizedDifference(['B4', 'B3']).rename(['ndvi']);
+  var ndbi = image.normalizedDifference(['B5', 'B4']).rename(['ndbi']);
+  var mndwi = image.normalizedDifference(['B3', 'B5']).rename(['mndwi']); 
+  var bsi = image.expression(
+      '(( X + Y ) - (A + B)) /(( X + Y ) + (A + B)) ', {
+        'X': image.select('B5'), //swir1
+        'Y': image.select('B3'),  //red
+        'A': image.select('B4'), // nir
+        'B': image.select('B1'), // blue
+  }).rename('bsi');
+  return image.addBands(ndvi).addBands(ndbi).addBands(mndwi).addBands(bsi)
+}
+
+var Image1 = addIndices(image);
+print(Image1, 'Image1');
+
+var label = 'class' 
+var bands = ['B1', 'B2', 'B3', 'B4','B5','B6','B7', 'ndvi', 'ndbi', 'mndwi', 'bsi']; // These are bands with 10 meter spatial resolution. 
+
+print('BANDS',bands);
+
+
+
+var visParamsTrue = {bands: ['B4', 'B3', 'B2'], min: 0, max: 0.4, gamma:1.2};
+Map.addLayer(image, visParamsTrue, "Landsat 1990");
+Map.centerObject(table, 8);
+
+var gcps = Tea_plantation.merge(others);
+print(gcps, 'gcps');
+
+// selects the bands 
+var Image1 = Image1.select(bands)
+print(Image1,'IMAGE1');
+
+// Overlay the point on the image to get training data.
+var training = Image1.sampleRegions({
+  collection: gcps, 
+  properties: ['class'], 
+  scale:  80
+});
+
+print(training, 'training');
+
+// Add a random column and split the GCPs into training and validation set
+var gcp = training.randomColumn()
+print(gcp, 'gcp');
+// This being a simpler classification, we take 60% points
+// for validation. Normal recommended ratio is
+// 70% training, 30% validation
+var trainingGcp = gcp.filter(ee.Filter.lt('random', 0.6));
+var validationGcp = gcp.filter(ee.Filter.gte('random', 0.6));
+
+// Train a classifier.
+var classifier = ee.Classifier.smileRandomForest(1000).train({
+  features: training,  
+  classProperty: 'class', 
+  inputProperties: bands
+});
+print(classifier, 'classifier');
+
+// // Classify the image.
+var classified = Image1.classify(classifier);
+
+Map.addLayer(classified, {min: 0, max: 1, palette: ['brown', 'green']}); 
+
+//--------------------------Focal_Mode-----Majority---Filter----------------------------------
+
+var image4 = classified.focal_mode();
+Map.addLayer(image4, {min: 0, max: 1, palette: ['brown', 'green']})
+
+//************************************************************************** 
+// Accuracy Assessment
+//************************************************************************** 
+
+// Use classification map to assess accuracy using the validation fraction
+// of the overall training set created above.
+// Accuracy Assessment
+//Classify the testingSet and get a confusion matrix.
+ var confusionMatrix = ee.ConfusionMatrix(validationGcp.classify(classifier)
+     .errorMatrix({
+       actual: 'class', 
+       predicted: 'classification'
+     }));
+
+print('Confusion matrix:', confusionMatrix);
+print('Overall Accuracy:', confusionMatrix.accuracy());
+print('Producers Accuracy:', confusionMatrix.producersAccuracy());
+print('Consumers Accuracy:', confusionMatrix.consumersAccuracy());
+print('Kappa statistic:', confusionMatrix.kappa());
+
+//Select the class from the classified image
+var tea = classified.select('classification').eq(0);//vegetation has 0 value in my case
+
+//Calculate the pixel area in square kilometer
+var area_tea = tea.multiply(ee.Image.pixelArea()).divide(1000000);
+
+//Reducing the statistics for your study area
+var stat = area_tea.reduceRegion ({
+  reducer: ee.Reducer.sum(),
+  geometry: table,
+  scale: 60,
+  maxPixels: 1e13
+});
+
+//Get the sq km area for Tea Plantation
+print ('Tea Plantation Area (in sq.km)', stat);
+
+//----------------------------Area Calculation--------------------------------------
+//Select the class from the classified image
+var tea1 = image4.select('classification').eq(0);//vegetation has 0 value in my case
+//Calculate the pixel area in square kilometer
+var area_tea1 = tea1.multiply(ee.Image.pixelArea()).divide(1000000);
+//Reducing the statistics for your study area
+var stat1 = area_tea1.reduceRegion ({
+  reducer: ee.Reducer.sum(),
+  geometry: table,
+  scale: 80,
+  maxPixels: 1e9
+});
+//Get the sq km area for Tea Plantation
+print ('Tea Plantation Area (in sq.km)FOCAL', stat1);
+
+Export.image.toDrive({
+   image: image4,
+   description: 'Tinsukia_2010',
+   scale: 20,
+   region: table,
+   maxPixels: 1e13,
+});
