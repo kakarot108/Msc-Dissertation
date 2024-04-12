@@ -8,3 +8,5 @@ Master thesis --
 DOI: http://dx.doi.org/10.13140/RG.2.2.29625.54887
 
 ![image](https://github.com/kakarot108/Msc-Dissertation/assets/94223948/bf49942f-7bc5-4713-b096-b5ce2b5a76b4)
+
+![image](https://github.com/kakarot108/Msc-Dissertation/assets/94223948/8ce8b437-79cc-4586-98b4-0ee6ef0e115e)
